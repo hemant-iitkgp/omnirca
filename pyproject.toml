@@ -1,0 +1,46 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.backends.legacy:build"
+
+[project]
+name = "omnirca"
+version = "0.1.0"
+description = "LLM-powered multi-agent root cause analysis for microservice incidents"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "openai>=1.0",
+    "networkx>=3.0",
+    "pandas>=2.0",
+    "faiss-cpu>=1.7",
+    "sentence-transformers>=2.0",
+    "numpy>=1.24",
+    "scipy>=1.10",
+    "python-dotenv>=1.0",
+]
+
+[tool.setuptools.package-dir]
+"omnirca"            = "."
+"omnirca.agent"      = "agent"
+"omnirca.agents"     = "agents"
+"omnirca.tools"      = "tools"
+"omnirca.data_layer" = "data_layer"
+"omnirca.rag"        = "rag"
+"omnirca.sops"       = "sops"
+"omnirca.voting"     = "voting"
+"omnirca.evaluation" = "evaluation"
+"omnirca.tests"      = "tests"
+
+[tool.setuptools]
+packages = [
+    "omnirca",
+    "omnirca.agent",
+    "omnirca.agents",
+    "omnirca.tools",
+    "omnirca.data_layer",
+    "omnirca.rag",
+    "omnirca.sops",
+    "omnirca.voting",
+    "omnirca.evaluation",
+    "omnirca.tests",
+]
