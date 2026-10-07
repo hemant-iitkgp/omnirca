@@ -7,7 +7,9 @@ from pathlib import Path
 
 # ── Paths ────────────────────────────────────────────────────────────────────
 PROJECT_ROOT      = Path(__file__).parent            # omnirca/
-DATA_DIR          = PROJECT_ROOT.parent / "datasets_complex"
+# OMNIRCA_DATA_DIR lets a run point at a different dataset without editing code.
+DATA_DIR          = Path(os.getenv("OMNIRCA_DATA_DIR",
+                                   str(PROJECT_ROOT.parent / "datasets_complex")))
 ARCH_PKL          = DATA_DIR / "architecture.pkl"
 FAULT_ENCYCLOPEDIA = DATA_DIR / "FAULT_ENCYCLOPEDIA.md"
 
@@ -23,10 +25,22 @@ TEMPERATURE_VOTES = [0.3, 0.5, 0.7]   # for N=3 self-consistency (Phase 5)
 MAX_STEPS         = 15
 
 # ── Anomaly detection ────────────────────────────────────────────────────────
-ANOMALY_THRESHOLD     = 2.5   # z-score threshold — "this service is anomalous"
-BASELINE_MINUTES      = 60    # baseline window length (minutes before fault start)
-BASELINE_SKIP_MINUTES = 5     # skip the N minutes immediately preceding the fault
+ANOMALY_THRESHOLD     = float(os.getenv("OMNIRCA_ANOMALY_THRESHOLD", 2.5))
+                               # z-score threshold — "this service is anomalous"
+BASELINE_MINUTES      = int(os.getenv("OMNIRCA_BASELINE_MINUTES", 60))
+                               # baseline window length (minutes before fault start)
+BASELINE_SKIP_MINUTES = int(os.getenv("OMNIRCA_BASELINE_SKIP", 5))
+                               # skip the N minutes immediately preceding the fault
                                # to avoid baseline contamination by early fault symptoms
+
+# ── Primary detection panel ──────────────────────────────────────────────────
+# Columns in syscalls.csv that DataDetective ranks services on.  A service's
+# score is the STRONGEST (max) z-score across this panel, so the ranking works
+# whatever the dataset's dominant channel happens to be.
+# datasets_complex: syscall duration is the only real signal -> just the two.
+# RCAEval: resource channels carry the fault, latency alone misses CPU faults.
+PRIMARY_CHANNELS = [c for c in os.getenv(
+    "OMNIRCA_PRIMARY_CHANNELS", "avg_duration_us,p99_duration_us").split(",") if c]
 
 # ── Graph fusion (Phase 2) ───────────────────────────────────────────────────
 STATIC_GRAPH_WEIGHT  = 1.0

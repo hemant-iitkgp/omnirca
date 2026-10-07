@@ -12,7 +12,7 @@ from __future__ import annotations
 import pandas as pd
 import numpy as np
 
-from ..config import ANOMALY_THRESHOLD, SIGNAL_WEIGHTS
+from ..config import ANOMALY_THRESHOLD, SIGNAL_WEIGHTS, PRIMARY_CHANNELS
 from ..data_layer.loader import get_loader
 from .base import (
     ToolResult,
@@ -105,8 +105,22 @@ def syscall_multi_service_compare(
         z_p99 = compute_z_score(during["p99_duration_us"], baseline["p99_duration_us"])
         err_ratio = compute_ratio(during["error_rate"], baseline["error_rate"])
 
+        # Strongest anomaly across the whole primary panel.  On datasets_complex
+        # the panel is just the two duration columns, so this equals z_avg and
+        # ranking is unchanged; on multi-channel datasets it prevents a fault
+        # that shows up in (say) CPU from being missed by a latency-only rank.
+        z_by_channel: dict[str, float] = {}
+        for chan in PRIMARY_CHANNELS:
+            if chan in svc_sc.columns:
+                z_by_channel[chan] = round(
+                    compute_z_score(during[chan], baseline[chan]), 2)
+        z_max = max(z_by_channel.values(), default=z_avg)
+        top_chan = max(z_by_channel, key=z_by_channel.get) if z_by_channel else "avg_duration_us"
+
         results.append({
             "service_name":     svc,
+            "z_max_channel":    round(z_max, 2),
+            "top_channel":      top_chan,
             "z_avg_duration":   round(z_avg, 2),
             "z_p99_duration":   round(z_p99, 2),
             "error_rate_ratio": round(err_ratio, 2),
@@ -116,12 +130,12 @@ def syscall_multi_service_compare(
                                 if len(during) > 0 else 0.0,
             "during_rows":      len(during),
             "baseline_rows":    len(baseline),
-            "anomalous":        z_avg > ANOMALY_THRESHOLD,
+            "anomalous":        z_max > ANOMALY_THRESHOLD,
         })
 
     df = (
         pd.DataFrame(results)
-        .sort_values("z_avg_duration", ascending=False)
+        .sort_values("z_max_channel", ascending=False)
         .reset_index(drop=True)
     )
     df.index = df.index + 1   # 1-based rank
@@ -134,17 +148,17 @@ def syscall_multi_service_compare(
         f"Baseline: {bs.strftime('%H:%M')}–{be.strftime('%H:%M')}  |  "
         f"Anomaly threshold: z > {ANOMALY_THRESHOLD}",
         "",
-        f"{'Rank':<5} {'Service':<22} {'z_avg':>7} {'z_p99':>7} "
-        f"{'err×':>6} {'base μs':>8} {'dur μs':>8} {'anomalous':>10}",
-        "-" * 80,
+        f"{'Rank':<5} {'Service':<22} {'z_max':>7} {'channel':>14} {'z_avg':>7} "
+        f"{'z_p99':>7} {'err×':>6} {'anomalous':>10}",
+        "-" * 88,
     ]
-    for rank, row in df.head(10).iterrows():
+    for rank, row in df.head(20).iterrows():
         flag = " <<< ANOMALOUS" if row["anomalous"] else ""
         lines.append(
             f"{rank:<5} {row['service_name']:<22} "
+            f"{row['z_max_channel']:>7.2f} {row['top_channel']:>14} "
             f"{row['z_avg_duration']:>7.2f} {row['z_p99_duration']:>7.2f} "
-            f"{row['error_rate_ratio']:>6.2f} "
-            f"{row['baseline_mean_us']:>8.1f} {row['during_mean_us']:>8.1f}"
+            f"{row['error_rate_ratio']:>6.2f}"
             f"{flag}"
         )
 

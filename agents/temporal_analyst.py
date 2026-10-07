@@ -140,8 +140,10 @@ class TemporalAnalyst(SubAgent):
             for tc in tool_calls:
                 if tc["tool"] == "detect_causal_order":
                     result_str = tc.get("result", "")
+                    from omnirca.data_layer.loader import get_loader
+                    known = sorted(get_loader().service_names, key=len, reverse=True)
                     svc_m = re.search(
-                        r"\b(backend_\d+|cache_\d+|database_\d+|frontend_\d+|auth_service)\b",
+                        r"\b(" + "|".join(re.escape(s) for s in known) + r")\b",
                         result_str,
                     )
                     if svc_m:

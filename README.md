@@ -4,7 +4,7 @@
 
 > *"Can an LLM agent, given standard SRE diagnostic procedures and raw telemetry — but no labels or ground truth — correctly identify the root cause of a microservice incident?"*
 
-**Result: 95.7% top-1 accuracy (22/23 runs) across 10 distinct fault types on a 20-service microservice topology.**
+**Result: 80–90% top-1 accuracy on the synthetic benchmark, and 43–67% on two external real-telemetry systems (RCAEval Online Boutique and Train Ticket).**
 
 ---
 
@@ -114,15 +114,41 @@ Evaluates consistency across all five preceding agents. Applies conflict resolut
 
 ## Evaluation Results
 
+### Synthetic benchmark (the dataset this system was built on)
+
 | Metric | Value |
 |---|---|
-| **Top-1 Root Cause Accuracy** | 22 / 23 = **95.7%** |
-| **Top-3 Coverage** | 23 / 23 = **100%** |
-| **Fault Category Accuracy** | 7 / 23 = 30.4% |
-| **Mean Latency** | ~48.4 seconds |
-| **HIGH-confidence calibration** | 18 / 19 = **94.7%** |
+| Top-1, `datasets_complex` (10 faults) | 8 / 10 = **80%** |
+| Top-1, `datasets_variant` (20 runs) | 18 / 20 = **90%** |
+| Top-1, 23-perspective battery | 17 / 23 = 73.9% |
+| Fault category accuracy | 20–30% |
+| Mean latency | ~55 s |
 
-The single failure (memory_leak, run P1) was caused by GraphExplorer's topology rule over-weighting database services. Fix: make the database-priority rule fault-category-aware and suppress it for `memory_leak`.
+### External benchmark — RCAEval (Pham et al., WWW '25)
+
+Real Kubernetes telemetry, 30 sampled cases per system, held-out repetitions.
+
+| System | Services | OmniRCA AC@1 | No-LLM baseline AC@1 |
+|---|---|---|---|
+| Online Boutique | 12 | **67–76%** | 70–72% |
+| Train Ticket | 68 | **43%** | 61% |
+
+### Honest caveats
+
+- **A no-LLM control (rank services by strongest z-score) scores 60–80%** depending on
+  dataset. Pooled over 88 held-out cases, the multi-agent layer's advantage over that control
+  is **not statistically significant** (McNemar χ² = 0.56).
+- **82% of evaluation cases don't require reasoning** — the true culprit is already the most
+  anomalous service. On the 18% that do, the agents score 37.5% versus the baseline's 12.5%.
+- **Results carry ±10 percentage points of run-to-run noise** at n = 10, measured by repeating
+  the identical evaluation three times (80%, 80%, 70%).
+- **Network faults are a systematic weakness**: `delay` 20%, `loss` 0–40%. The benchmark's own
+  published baselines show the same pattern.
+
+An earlier version of this README reported 95.7% (22/23). That figure came from a superseded
+April run and is contradicted by the project's own saved results, by Chapter 6 of the report,
+and by the presentation — all of which report 73.9% for that battery. Full analysis in
+[`MTP-1/analysis/`](../MTP-1/analysis/).
 
 ---
 

@@ -55,6 +55,11 @@ class MultiAgentResult:
     duration_s:      float = 0.0
     needs_more_evidence: bool = False
 
+    # Decision provenance: which agent proposed what, and where the running
+    # answer changed.  Captured so the pipeline's internal mechanics can be
+    # analysed after the fact instead of being lost with the log.
+    provenance:      dict[str, Any] = field(default_factory=dict)
+
     def summary(self) -> str:
         return (
             f"Root cause: {self.root_cause}  |  "
@@ -115,6 +120,19 @@ class MainAgent:
         }
 
         agent_reports: dict[str, SubAgentReport] = {}
+        prov: dict[str, Any] = {"t_start": t_start, "t_end": t_end}
+
+        def _snap(tag: str, *keys: str) -> None:
+            """Record what this agent proposed and how long it took."""
+            for k in keys:
+                prov[f"{tag}_{k}"] = ctx.get(k)
+            rep = agent_reports.get({"DD": "DataDetective", "GE": "GraphExplorer",
+                                     "FT": "FaultTyper", "EC": "EvidenceCollector",
+                                     "TA": "TemporalAnalyst", "JA": "JudgeAgent"}[tag])
+            if rep is not None:
+                prov[f"{tag}_dur"] = rep.duration_s
+                prov[f"{tag}_steps"] = rep.steps_taken
+                prov[f"{tag}_tools"] = [c["tool"] for c in rep.tool_calls]
 
         # ── 1. DataDetective ────────────────────────────────────────────────
         self._log("DataDetective", "scanning all 20 services for syscall anomalies")
@@ -126,6 +144,7 @@ class MainAgent:
             _log.error("DataDetective FAILED: %s — using empty anomaly list", e)
             ctx.setdefault("ranked_services", [])
             ctx.setdefault("top_service", "unknown")
+        _snap('DD', "top_service", "ranked_services", "top_score")
 
         # ── 2. GraphExplorer ─────────────────────────────────────────────────
         self._log("GraphExplorer", f"tracing upstream from {ctx.get('top_service')}")
@@ -136,6 +155,7 @@ class MainAgent:
         except Exception as e:
             _log.error("GraphExplorer FAILED: %s — using DD top as candidate", e)
             ctx.setdefault("top_candidate", ctx.get("top_service", "unknown"))
+        _snap('GE', "top_candidate", "propagation_path")
 
         # ── 3. FaultTyper ────────────────────────────────────────────────────
         self._log("FaultTyper", "classifying fault type")
@@ -146,6 +166,7 @@ class MainAgent:
         except Exception as e:
             _log.error("FaultTyper FAILED: %s — using unknown category", e)
             ctx.setdefault("fault_category", "unknown")
+        _snap('FT', "fault_category")
 
         # ── 4. EvidenceCollector ─────────────────────────────────────────────
         self._log("EvidenceCollector", f"gathering multi-modal evidence for candidates")
@@ -155,6 +176,7 @@ class MainAgent:
             self._merge(ctx, evidence_report.findings)
         except Exception as e:
             _log.error("EvidenceCollector FAILED: %s — proceeding without extra evidence", e)
+        _snap("EC", "best_candidate", "modalities_hit")
 
         # ── 5. TemporalAnalyst ───────────────────────────────────────────────
         self._log("TemporalAnalyst", "establishing causal onset order")
@@ -164,6 +186,7 @@ class MainAgent:
             self._merge(ctx, temporal_report.findings)
         except Exception as e:
             _log.error("TemporalAnalyst FAILED: %s — proceeding without temporal data", e)
+        _snap("TA", "earliest_service", "temporal_verdict", "causal_lead_min")
 
         # ── 6. JudgeAgent ────────────────────────────────────────────────────
         self._log("JudgeAgent", "synthesizing all findings → final verdict")
@@ -174,6 +197,7 @@ class MainAgent:
         except Exception as e:
             _log.error("JudgeAgent FAILED: %s — using best available root cause", e)
             ctx.setdefault("final_root_cause", ctx.get("top_candidate", ctx.get("top_service", "unknown")))
+        _snap("JA", "final_root_cause", "final_fault_category", "final_confidence")
 
         # ── Extract final verdict from JudgeAgent findings ───────────────────
         root_cause      = ctx.get("final_root_cause",     ctx.get("top_service", "unknown"))
@@ -221,6 +245,7 @@ class MainAgent:
             judge_justification  = justification,
             duration_s           = round(total_s, 2),
             needs_more_evidence  = needs_more,
+            provenance           = prov,
         )
 
     # ── Helpers ───────────────────────────────────────────────────────────────

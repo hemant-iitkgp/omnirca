@@ -47,23 +47,37 @@ You receive a list of anomalous services from DataDetective. Your job is to trac
 UPSTREAM through the dependency graph to find which service most likely CAUSED the
 anomalies seen in others.
 
-KEY TOPOLOGY RULES:
-• auth_service is called by ALL services — its anomaly = everyone is affected.
-  It is almost always a VICTIM, not a cause. Treat it last.
-• logging is called by ALL services passively — ignore it entirely.
-• cache_1 has ZERO incoming edges — it is isolated. If cache_1 is anomalous,
-  it IS the root cause for that fault (nothing upstream can cause it).
-• A typical call chain: frontend → api_gateway → backend_{N} → database/cache
-• Edge direction: A → B means "A calls B". Predecessors of B = callers of B.
+CAUSAL DIRECTION — THE MOST IMPORTANT RULE:
+• Edge direction: A → B means "A calls B". Successors of B = the services B
+  DEPENDS ON (callees, downstream). Predecessors of B = its CALLERS (upstream).
+• A fault inside service X makes X slow or broken. Everything that CALLS X then
+  waits on it and also looks degraded. So faults propagate UPSTREAM, from the
+  broken service toward its callers.
+• THEREFORE: callers of the faulty service are VICTIMS. The root cause is the
+  anomalous service that does NOT itself depend on any other anomalous service
+  — i.e. the deepest anomalous service, with no anomalous CALLEE beneath it.
+• A service with FEW OR NO CALLERS is the system's entry point (frontend,
+  gateway, load balancer). It sees every downstream problem and is therefore the
+  most common VICTIM of all. Never conclude the entry point is the root cause
+  merely because nothing upstream of it is anomalous — that is true by
+  definition for an entry point and carries no evidence.
+• Passive sinks that everything calls (logging/telemetry collectors) are never
+  root causes.
+• A service that is anomalous while all of its callees are healthy originated
+  the fault. That is the strongest structural signal available.
 
 INVESTIGATION STEPS:
 1. Call get_service_dependencies on EACH of the top 3 anomalous services from DD.
-2. Call get_propagation_candidates on EACH of the top 3 DD-ranked services, not just #1.
-   CRITICAL: DD's #1 service may be a downstream VICTIM, not the root.
-   • If a service returns "no anomalous upstream candidates found", that service
-     has NO anomalous callers — it is a STRONG root cause candidate.
+   Look at each candidate's CALLEES: are any of them also in DD's anomalous list?
+   • If a candidate depends on another anomalous service, the candidate is
+     probably a victim of it — move down to that dependency.
+   • If a candidate's callees are all healthy, the candidate is the root.
+2. Call get_propagation_candidates on the top DD-ranked services to see the
+   anomalous callers. Many anomalous callers = the service is being depended on
+   and is a likely ROOT; a service with no callers at all is the entry point and
+   is a likely VICTIM, not a root.
    • The root is the service that:
-     a) Has the HIGHEST z-score among services with no anomalous upstream callers, OR
+     a) Is anomalous, AND has no anomalous service among its own dependencies, OR
      b) Has the earliest anomaly onset (from detect_causal_order).
 3. Call detect_causal_order on all anomalous services to find the first-onset service.
 4. Call build_call_path(root_candidate, victim_service) to confirm the causal chain.
@@ -152,7 +166,11 @@ class GraphExplorer(SubAgent):
 
         m = re.search(r"TOP_CANDIDATE:\s*(\S+)", final_text)
         if m:
-            findings["top_candidate"] = m.group(1).strip().strip("`")
+            # Strip markdown emphasis; if nothing sane is left, keep DD's pick
+            # rather than letting a token like "**" propagate into the verdict.
+            cand = m.group(1).strip().strip("`").strip("*").strip()
+            if cand:
+                findings["top_candidate"] = cand
 
         m = re.search(r"TOPOLOGY_NOTES:\s*(.+?)(?:\n|ANALYSIS_COMPLETE|$)", final_text, re.DOTALL)
         if m:
@@ -164,8 +182,10 @@ class GraphExplorer(SubAgent):
                 if tc["tool"] == "get_propagation_candidates":
                     result_str = tc.get("result", "")
                     # Pull first mentioned service from result
+                    from omnirca.data_layer.loader import get_loader
+                    known = sorted(get_loader().service_names, key=len, reverse=True)
                     svc_m = re.search(
-                        r"\b(backend_\d+|cache_\d+|database_\d+|frontend_\d+|auth_service)\b",
+                        r"\b(" + "|".join(re.escape(s) for s in known) + r")\b",
                         result_str)
                     if svc_m:
                         findings["top_candidate"] = svc_m.group(1)

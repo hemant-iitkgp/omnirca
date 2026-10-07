@@ -191,7 +191,12 @@ class JudgeAgent(SubAgent):
 
         m = re.search(r"FINAL_ROOT_CAUSE:\s*(\S+)", final_text)
         if m:
-            findings["final_root_cause"] = m.group(1).strip().strip("`")
+            # Strip markdown emphasis the model sometimes wraps the name in.
+            # If nothing sane survives, keep the upstream fallback rather than
+            # emitting a junk service name like "**".
+            cand = m.group(1).strip().strip("`").strip("*").strip()
+            if cand:
+                findings["final_root_cause"] = cand
 
         m = re.search(r"FINAL_FAULT_CATEGORY:\s*(\S+)", final_text)
         if m:
